@@ -9,6 +9,7 @@ IS_DEV = os.getenv("NODE_ENV") == "development"
 ROOT_PATH = os.environ.get("ROOT_PATH", "")
 
 PING_URL = os.getenv("ADDON_URL") 
+ADDON_URL = os.getenv("ADDON_URL")
 
 TMDB_KEY = os.getenv("TMDB_KEY")
 URL_BASE = os.getenv("URL_BASE")

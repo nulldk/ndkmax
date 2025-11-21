@@ -1,9 +1,9 @@
 import httpx
 import time
 from aiocron import crontab
+from urllib.parse import unquote, quote
 
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
@@ -12,28 +12,12 @@ from metadata.tmdb import TMDB
 from utils.logger import setup_logger
 from utils.stremio_parser import parse_hls_to_stremio
 from utils.dixmax import GestorPerfiles, Perfil, obtener_enlace
-from config import PERFILES, ROOT_PATH, IS_DEV, VERSION
-# --- Inicialización ---
+from utils.hls_proxy import fetch_and_rewrite_manifest
+from config import PERFILES, ROOT_PATH, IS_DEV, VERSION, ADDON_URL, PING_URL
+
 logger = setup_logger(__name__)
+http_client = httpx.AsyncClient(timeout=30, follow_redirects=True)
 
-
-# OPTIMIZADO: Crear un cliente httpx para reutilizar conexiones
-http_client = httpx.AsyncClient(timeout=30)
-
-def actualizar_perfiles_periodicamente():
-    state.INSTANCIAS = {} # Reset
-    for nombre, cred in PERFILES.items():
-        p = Perfil(cred)
-        if p.valido:
-            state.INSTANCIAS[nombre] = p
-    
-    if state.INSTANCIAS:
-        state.gestor = GestorPerfiles(state.INSTANCIAS)
-        logger.info(f"Perfiles válidos: {', '.join(state.INSTANCIAS.keys())}")
-    else:
-        logger.error("No hay perfiles válidos.")
-
-# Configuración de la aplicación FastAPI
 app = FastAPI(root_path=f"/{ROOT_PATH}" if ROOT_PATH and not ROOT_PATH.startswith("/") else ROOT_PATH)
 
 app.add_middleware(
@@ -44,79 +28,108 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Endpoints de la Interfaz y Manifiesto ---
+# --- GESTIÓN DE PERFILES ---
+def actualizar_perfiles_periodicamente():
+    state.INSTANCIAS = {} 
+    for nombre, cred in PERFILES.items():
+        p = Perfil(cred)
+        if p.valido:
+            state.INSTANCIAS[nombre] = p
+    if state.INSTANCIAS:
+        state.gestor = GestorPerfiles(state.INSTANCIAS)
+        logger.info(f"PERFILES: {len(state.INSTANCIAS)} perfiles activos.")
+    else:
+        logger.error("PERFILES: Ninguno válido.")
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("Empezando comprobaciones de perfiles...")
     actualizar_perfiles_periodicamente()
-    logger.info("Comprobacion de perfiles acabada.")
 
+# --- ENDPOINT PROXY ---
+@app.api_route("/proxy/manifest", methods=["GET", "HEAD"])
+async def proxy_manifest_endpoint(request: Request, url: str):
+    target_url = unquote(url)
+    logger.debug(f"PROXY_REQ: Cliente solicita -> {target_url}")
+    
+    current_proxy_base = str(ADDON_URL).rstrip('/')
+    
+    content, status = await fetch_and_rewrite_manifest(http_client, target_url, current_proxy_base)
+    
+    if status != 200:
+        logger.error(f"PROXY_ERR: Origen respondió {status}")
+        return Response(status_code=status)
+    
+    logger.info("PROXY_OK: Entregando manifiesto modificado.")
+    
+    headers = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+    }
+    
+    return Response(content=content, media_type="application/vnd.apple.mpegurl", headers=headers)
 
-@app.get("/", include_in_schema=False)
-async def root():
-    """Redirige a la página de configuración."""
-    return RedirectResponse(url="/manifest.json")
-
+# --- ENDPOINT PRINCIPAL (STREMIO) ---
 @app.get("/manifest.json")
 async def get_manifest():
-    """
-    Proporciona el manifiesto del addon a Stremio.
-    Define las capacidades y metadatos del addon.
-    """
-    addon_name = f"NDKMAX{' (Dev)' if IS_DEV else ''}"
     return {
         "id": "ndk.ndkmax.ndk",
-        "icon": "https://i.ibb.co/zGmkQZm/ndk.jpg",
         "version": VERSION,
-        "catalogs": [],
         "resources": ["stream"],
         "types": ["movie", "series"],
-        "name": addon_name,
-        "description": "Addon que usa DixMax para su reproduducción en Stremio. El contenido es obtenido de la app de Dixmax, fuentes de terceros.",
+        "name": "NDKMAX Proxy",
+        "catalogs": [],
         "behaviorHints": {"configurable": False},
     }
 
-
-# --- Lógica Principal del Addon ---
 @app.get("/stream/{stream_type}/{stream_id}")
 async def get_results(stream_type: str, stream_id: str):
-    """
-    Busca y devuelve los streams disponibles para un item (película o serie).
-    """
+    logger.info(f"STREAM_REQ: Solicitud recibida para {stream_id} ({stream_type})")
+    
     start_time = time.time()
     stream_id = stream_id.replace(".json", "")
 
     metadata_provider = TMDB(http_client)
     media = await metadata_provider.get_metadata(stream_id, stream_type)
 
+    if not media:
+        return {"streams": []}
+
     if media.type == "movie":
-        titulo = f"{media.titles[0]}"
+        titulo = media.titles[0]
         duracion = await metadata_provider.get_duration(media.id, media.type)
-        search_results = await obtener_enlace(http_client, media.id, is_movie = True)
+        search_results = await obtener_enlace(http_client, media.id, is_movie=True)
     else:
         titulo = f"{media.titles[0]} S{media.season}E{media.episode}"
         duracion = await metadata_provider.get_duration(media.id, media.type, media.season, media.episode)
-        search_results = await obtener_enlace(http_client, media.id, is_movie = False, season = media.season, episode = media.episode)
+        search_results = await obtener_enlace(http_client, media.id, is_movie=False, season=media.season, episode=media.episode)
 
     if not search_results:
-        logger.info(f"No se encontraron resultados para {media.type} {stream_id}. Tiempo total: {time.time() - start_time:.2f}s")
+        logger.info("STREAM_RES: 0 resultados encontrados.")
         return {"streams": []}
-    
+
     final_results = []
-    for result in search_results:
-        final_results.append(await parse_hls_to_stremio(http_client, result, titulo, duracion))
+    base_url = str(ADDON_URL).rstrip('/')
     
-    logger.info(f"Resultados encontrados. Tiempo total: {time.time() - start_time:.2f}s")
+
+    for result in search_results:
+        stream_entry = await parse_hls_to_stremio(http_client, result, titulo, duracion)
+        
+        original_url = stream_entry["url"]
+        encoded_url = quote(original_url)
+        proxied_url = f"{base_url}/proxy/manifest?url={encoded_url}"
+        
+        stream_entry["url"] = proxied_url
+        stream_entry["behaviorHints"]["notWebReady"] = False
+        
+        final_results.append(stream_entry)
+
+    logger.info(f"STREAM_RES: {len(final_results)} streams generados (con proxy).")
     return {"streams": final_results}
 
 @crontab("* * * * *", start=not IS_DEV)
 async def ping_service():
-    """Mantiene el servicio activo en plataformas como Render haciendo un ping cada minuto."""
-    try:
-        await http_client.get(PING_URL)
-    except httpx.RequestError as e:
-        logger.error(f"Fallo en el ping al servicio: {e}")
+    pass 
 
 @crontab("* * * * *", start=not IS_DEV)
 async def actualizar_perfiles():
