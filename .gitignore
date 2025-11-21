@@ -1,0 +1,25 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Entornos virtuales ---
+venv/
+.venv/
+env/
+.env/
+
+# --- Variables de Entorno y Claves (CRÍTICO) ---
+.env
+.env.save
+.env.save.*
+.env.*.local
+
+# --- Logs ---
+*.log
+
+# --- IDEs y Sistema Operativo ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
