@@ -58,20 +58,16 @@ async def shutdown_event():
 @app.api_route("/proxy/manifest", methods=["GET", "HEAD"])
 async def proxy_manifest_endpoint(request: Request, url: str):
     if not url: return Response(status_code=400)
-    
     target_url = unquote(url)
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get("host", request.url.netloc)
     current_proxy_base = f"{scheme}://{host}{ROOT_PATH}"
-    
-    content, status = await fetch_and_rewrite_manifest(http_client, target_url, current_proxy_base)
-    
+    content, status, content_type = await fetch_and_rewrite_manifest(http_client, target_url, current_proxy_base)
     if status != 200:
         return Response(status_code=status)
-    
     return Response(
-        content=content, 
-        media_type="application/vnd.apple.mpegurl", 
+        content=content,
+        media_type=content_type or "application/octet-stream",
         headers={
             "Access-Control-Allow-Origin": "*",
             "Cache-Control": "public, max-age=120",
