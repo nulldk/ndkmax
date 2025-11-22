@@ -22,7 +22,6 @@ def parse_bandwidth(line):
     return int(match.group(1)) if match else 0
 
 def extract_attributes(line):
-    """Lee atributos solo para decidir el idioma, no para reconstruir."""
     attrs = {}
     for match in RE_ATTRIBUTES.finditer(line):
         key = match.group(1)
@@ -34,18 +33,20 @@ def get_readable_lang_and_code(code_raw, name_raw):
     code = code_raw.lower().strip()
     name = name_raw.lower().strip()
     
-    if code in ["est", "et", "lat", "mx", "es-419", "es-mx"] or "eesti" in name or "latino" in name:
-        return "Castellano", "es-ES"
-    elif code in ["spa", "es", "esp", "es-es", "castellano"] or "castellano" in name or "spanish" in name or "español" in name:
+    if code in ["et", "est", "es-419", "es-mx", "mx", "lat"] or "eesti" in name or "latino" in name or "latin" in name:
         return "Latino", "es-MX"
+    elif code in ["es-es", "esp", "spa", "es"] or "castellano" in name or "spain" in name or "español" in name:
+        return "Castellano", "es-ES"
     elif code in ["eng", "en", "ing", "en-us", "en-gb"] or "english" in name:
         return "English", "en"
-    elif code in ["jpn", "ja"]:
+    elif code in ["jpn", "ja"] or "japanese" in name:
         return "Japanese", "ja"
-    elif code in ["ita", "it"]:
+    elif code in ["ita", "it"] or "italian" in name:
         return "Italiano", "it"
-    elif code in ["fra", "fr"]:
+    elif code in ["fra", "fr"] or "french" in name:
         return "Français", "fr"
+    elif code in ["deu", "de", "ger"] or "german" in name:
+        return "Deutsch", "de"
     return None, code_raw
 
 def process_media_tag(line, base_url, proxy_base_url):
@@ -81,7 +82,8 @@ def process_media_tag(line, base_url, proxy_base_url):
                 details.append(f"{channels}ch")
 
         haystack = (clean_name + " " + (original_uri if original_uri else "")).lower()
-        if "ac3" in haystack or "dd" in haystack: details.append("HQ")
+        if "ac3" in haystack or "dd" in haystack:
+            details.append("HQ")
 
         if details:
             final_name_str = f"{base_name} ({' '.join(details)})"
@@ -89,21 +91,20 @@ def process_media_tag(line, base_url, proxy_base_url):
             final_name_str = base_name
 
         line = re.sub(
-            r'NAME=(?:"[^"]*"|[^,]+)', 
-            f'NAME="{final_name_str}"', 
-            line, 
+            r'NAME=(?:"[^"]*"|[^,]+)',
+            f'NAME="{final_name_str}"',
+            line,
             count=1
         )
 
         if clean_code:
             line = re.sub(
-                r'LANGUAGE=(?:"[^"]*"|[^,]+)', 
-                f'LANGUAGE="{clean_code}"', 
-                line, 
+                r'LANGUAGE=(?:"[^"]*"|[^,]+)',
+                f'LANGUAGE="{clean_code}"',
+                line,
                 count=1
             )
 
-        # Manejo de la URI (Proxy)
         if original_uri:
             clean_uri = original_uri.replace('"', '')
             absolute_url = urljoin(base_url, clean_uri)
@@ -113,17 +114,16 @@ def process_media_tag(line, base_url, proxy_base_url):
                 new_uri = f"{proxy_base_url}/proxy/manifest?url={encoded_target}"
                 
                 line = re.sub(
-                    r'URI=(?:"[^"]*"|[^,]+)', 
-                    f'URI="{new_uri}"', 
-                    line, 
+                    r'URI=(?:"[^"]*"|[^,]+)',
+                    f'URI="{new_uri}"',
+                    line,
                     count=1
                 )
             else:
-                # Si es absoluta directa (ts/mp4), actualizamos a absoluta
                 line = re.sub(
-                    r'URI=(?:"[^"]*"|[^,]+)', 
-                    f'URI="{absolute_url}"', 
-                    line, 
+                    r'URI=(?:"[^"]*"|[^,]+)',
+                    f'URI="{absolute_url}"',
+                    line,
                     count=1
                 )
 
@@ -137,7 +137,6 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
     lines = content.splitlines()
     
     if "#EXT-X-STREAM-INF" in content:
-        # MASTER PLAYLIST
         header_lines = []
         streams = []
         audio_lines = []
@@ -145,10 +144,10 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
 
         for line in lines:
             line = line.strip()
-            if not line: continue
+            if not line:
+                continue
 
             if line.startswith("#EXT-X-MEDIA:TYPE=AUDIO"):
-                # Procesamiento seguro
                 processed_line = process_media_tag(line, base_url, proxy_base_url)
                 audio_lines.append(processed_line)
             elif line.startswith("#EXTM3U") or line.startswith("#EXT-X-VERSION") or line.startswith("#EXT-X-INDEPENDENT"):
@@ -179,7 +178,6 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
         return "\n".join(final_lines)
 
     else:
-        # MEDIA PLAYLIST (Segmentos)
         rewritten_lines = []
         for line in lines:
             line = line.strip()
@@ -191,7 +189,6 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
                 if line.startswith("#EXT-X-MEDIA:TYPE=AUDIO"):
                     line = process_media_tag(line, base_url, proxy_base_url)
                 elif "URI=" in line:
-                    # Reemplazo seguro dentro de etiquetas custom
                     def replace_uri(match):
                         prefix, r_url, suffix = match.groups()
                         abs_url = urljoin(base_url, r_url)
@@ -203,7 +200,6 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
                 rewritten_lines.append(line)
                 continue
 
-            # URL de segmento
             absolute_url = urljoin(base_url, line)
             if line.endswith(".m3u8"):
                 encoded_target = quote(absolute_url)
@@ -217,7 +213,6 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
 async def fetch_and_rewrite_manifest(client: httpx.AsyncClient, target_url: str, proxy_base_url: str):
     now = time.time()
     
-    # 1. Verificar Caché
     if target_url in manifest_cache:
         cached_data = manifest_cache[target_url]
         if now - cached_data['timestamp'] < CACHE_TTL:
@@ -225,7 +220,6 @@ async def fetch_and_rewrite_manifest(client: httpx.AsyncClient, target_url: str,
         else:
             del manifest_cache[target_url]
 
-    # 2. Limpieza de memoria
     if len(manifest_cache) > MAX_CACHE_SIZE:
         keys_to_del = list(manifest_cache.keys())[:int(MAX_CACHE_SIZE * 0.3)]
         for k in keys_to_del:
