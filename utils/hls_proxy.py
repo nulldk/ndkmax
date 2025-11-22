@@ -9,7 +9,7 @@ logger = setup_logger(__name__)
 
 # --- CONFIGURACIÓN ---
 manifest_cache = {}
-CACHE_TTL = 120
+CACHE_TTL = 0
 MAX_CACHE_SIZE = 1000
 
 # --- REGEX ---
@@ -212,40 +212,43 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
 
 async def fetch_and_rewrite_manifest(client: httpx.AsyncClient, target_url: str, proxy_base_url: str):
     now = time.time()
-    
     if target_url in manifest_cache:
         cached_data = manifest_cache[target_url]
         if now - cached_data['timestamp'] < CACHE_TTL:
-            return cached_data['content'], 200
+            return cached_data['content'], 200, cached_data.get('content_type')
         else:
             del manifest_cache[target_url]
-
     if len(manifest_cache) > MAX_CACHE_SIZE:
         keys_to_del = list(manifest_cache.keys())[:int(MAX_CACHE_SIZE * 0.3)]
         for k in keys_to_del:
             del manifest_cache[k]
-
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             "Accept-Encoding": "gzip, deflate"
         }
-        
         response = await client.get(target_url, headers=headers)
         if response.status_code != 200:
-            return None, response.status_code
-
+            return None, response.status_code, None
+        content_type = response.headers.get("content-type", "")
+        is_m3u8 = ".m3u8" in str(response.url.path) or "application/vnd.apple.mpegurl" in content_type or "application/x-mpegURL" in content_type
+        if not is_m3u8:
+            body = response.content
+            manifest_cache[target_url] = {
+                'content': body,
+                'timestamp': now,
+                'content_type': content_type
+            }
+            return body, 200, content_type
         content = response.text
         base_url = str(response.url)
-
         final_content = await asyncio.to_thread(_cpu_bound_rewrite, content, base_url, proxy_base_url)
-
         manifest_cache[target_url] = {
             'content': final_content,
-            'timestamp': now
+            'timestamp': now,
+            'content_type': "application/vnd.apple.mpegurl"
         }
-        return final_content, 200
-
+        return final_content, 200, "application/vnd.apple.mpegurl"
     except Exception as e:
         logger.error(f"PROXY_ERROR: {e}")
-        return None, 500
+        return None, 500, None
