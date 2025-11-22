@@ -110,7 +110,7 @@ def process_media_tag(line, base_url, proxy_base_url):
             absolute_url = urljoin(base_url, clean_uri)
             
             if ".m3u8" in absolute_url:
-                encoded_target = quote(absolute_url)
+                encoded_target = quote(absolute_url, safe=':/?&=')
                 new_uri = f"{proxy_base_url}/proxy/manifest?url={encoded_target}"
                 
                 line = re.sub(
@@ -170,7 +170,7 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
 
         for s in streams:
             absolute_url = urljoin(base_url, s["url"])
-            encoded_target = quote(absolute_url)
+            encoded_target = quote(absolute_url, safe=':/?&=')
             proxied_url = f"{proxy_base_url}/proxy/manifest?url={encoded_target}"
             final_lines.append(s["meta"])
             final_lines.append(proxied_url)
@@ -193,7 +193,7 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
                         prefix, r_url, suffix = match.groups()
                         abs_url = urljoin(base_url, r_url)
                         if ".m3u8" in abs_url:
-                            enc = quote(abs_url)
+                            enc = quote(abs_url, safe=':/?&=')
                             return f"{prefix}{proxy_base_url}/proxy/manifest?url={enc}{suffix}"
                         return f"{prefix}{abs_url}{suffix}"
                     line = RE_URI_QUOTED.sub(replace_uri, line)
@@ -202,7 +202,7 @@ def _cpu_bound_rewrite(content, base_url, proxy_base_url):
 
             absolute_url = urljoin(base_url, line)
             if line.endswith(".m3u8"):
-                encoded_target = quote(absolute_url)
+                encoded_target = quote(absolute_url, safe=':/?&=')
                 proxied_url = f"{proxy_base_url}/proxy/manifest?url={encoded_target}"
                 rewritten_lines.append(proxied_url)
             else:
