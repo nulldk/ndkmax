@@ -131,6 +131,6 @@ async def get_results(stream_type: str, stream_id: str):
 async def ping_service():
     pass 
 
-@crontab("* /4 * * *", start=not IS_DEV)
+@crontab("0 */4 * * *", start=not IS_DEV)
 async def actualizar_perfiles():
     actualizar_perfiles_periodicamente()
