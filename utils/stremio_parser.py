@@ -63,7 +63,7 @@ def parse_hls_to_stremio(url: str, content_title: str, duration: float, content:
 
         spacer = "\u2800" * 2
         name_formatted = f"NDKMAX{spacer} {max_quality}"
-        description = f"{content_title}\n{size_info}{flags_str}"
+        description = f"{content_title} - {max_quality}\n{size_info}{flags_str}"
             
         stream_entry = {
             "name": name_formatted,
