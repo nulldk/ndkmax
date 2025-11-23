@@ -9,7 +9,6 @@ from metadata.tmdb import TMDB
 from utils.logger import setup_logger
 from utils.stremio_parser import parse_hls_to_stremio
 from utils.dixmax import GestorPerfiles, Perfil, obtener_enlace
-from utils.hls_proxy import fetch_and_rewrite_manifest
 from config import PERFILES, ROOT_PATH, IS_DEV, VERSION, ADDON_URL
 
 logger = setup_logger(__name__)
@@ -106,17 +105,13 @@ async def get_results(stream_type: str, stream_id: str):
             search_results = await obtener_enlace(http_client, media.id, is_movie=False, season=media.season, episode=media.episode)
 
         if not search_results: return {"streams": []}
+        
+        if IS_DEV:
+            logger.info("Enlace obtenido:", search_results[0])
 
         final_results = []
-        base_url = str(ADDON_URL).rstrip('/')
-
         for result in search_results:
             stream_entry = await parse_hls_to_stremio(http_client, result, titulo, duracion)
-            original_url = stream_entry["url"]
-            proxied_url = f"{base_url}/proxy/manifest?url={quote(original_url)}"
-            
-            stream_entry["url"] = proxied_url
-            stream_entry["behaviorHints"]["notWebReady"] = False
             final_results.append(stream_entry)
 
         return {"streams": final_results}
