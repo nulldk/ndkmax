@@ -8,9 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import state
 from metadata.tmdb import TMDB
 from utils.logger import setup_logger
-from utils.stremio_parser import parse_hls_to_stremio
+from utils.stremio_parser import parse_manifest_to_qualities
 from utils.dixmax import GestorPerfiles, Perfil, obtener_enlace
-from utils.hls_proxy import fetch_and_rewrite_manifest
+from utils.hls_proxy import fetch_and_rewrite_manifest, filter_manifest_by_quality
 from config import PERFILES, ROOT_PATH, IS_DEV, VERSION, ADDON_URL
 
 logger = setup_logger(__name__)
@@ -86,23 +86,24 @@ async def startup_event():
 async def shutdown_event():
     await http_client.aclose()
 
-@app.api_route("/proxy/manifest", methods=["GET", "HEAD"])
-async def proxy_manifest_endpoint(url: str):
+@app.get("/proxy/filter")
+async def proxy_filter_endpoint(url: str, bw: int):
     if not url: return Response(status_code=400)
     target_url = unquote(url)
     
-    content, status, content_type = await get_or_fetch_content(target_url)
+    content, status, _ = await get_or_fetch_content(target_url)
 
-    if status != 200:
-        return Response(status_code=status)
+    if status != 200 or not content:
+        return Response(status_code=status or 404)
         
+    filtered_content = filter_manifest_by_quality(content, bw)
+    
     return Response(
-        content=content,
-        media_type=content_type or "application/octet-stream",
+        content=filtered_content,
+        media_type="application/vnd.apple.mpegurl",
         headers={
             "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "public, max-age=3600",
-            "X-Proxy-Agent": "NDKMAX-Opt"
+            "Cache-Control": "public, max-age=3600"
         }
     )
 
@@ -150,22 +151,16 @@ async def get_results(stream_type: str, stream_id: str):
 
         if not search_results: return {"streams": []}
 
-        final_results = []
-        base_url = str(ADDON_URL).rstrip('/')
+        final_streams = []
 
-        for result in search_results:
-            content, status, _ = await get_or_fetch_content(result)
+        for result_url in search_results:
+            content, status, _ = await get_or_fetch_content(result_url)
             
             if status == 200 and content:
-                stream_entry = parse_hls_to_stremio(result, titulo, duracion, content)
-                original_url = stream_entry["url"]
-                proxied_url = f"{base_url}/proxy/manifest?url={quote(original_url)}"
-                
-                stream_entry["url"] = proxied_url
-                stream_entry["behaviorHints"]["notWebReady"] = False
-                final_results.append(stream_entry)
+                streams = parse_manifest_to_qualities(result_url, titulo, duracion, content)
+                final_streams.extend(streams)
 
-        return {"streams": final_results}
+        return {"streams": final_streams}
     except Exception as e:
         logger.error(f"Error en streams: {e}")
         return {"streams": []}

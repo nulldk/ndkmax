@@ -48,7 +48,7 @@ def _cpu_bound_rewrite(content, base_url):
 async def fetch_and_rewrite_manifest(client: httpx.AsyncClient, target_url: str):
     try:
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept-Encoding": "gzip, deflate"
         }
         
@@ -56,23 +56,36 @@ async def fetch_and_rewrite_manifest(client: httpx.AsyncClient, target_url: str)
         response = await client.get(target_url, headers=headers)
         
         if response.status_code != 200:
-            logger.error(f"[ERROR] Status {response.status_code} for {target_url}")
             return None, response.status_code, None
 
         content_type = response.headers.get("content-type", "application/vnd.apple.mpegurl")
-        
-        if "#EXTM3U" not in response.text[:20]:
-             logger.warning("[WARN] Not a valid M3U8, passing through raw content.")
-             return response.content, 200, content_type
-
         base_url = str(response.url)
         
         final_content, count = await asyncio.to_thread(_cpu_bound_rewrite, response.text, base_url)
-
-        logger.info(f"[REWRITE] Master procesado. URLs reescritas: {count}")
-
         return final_content, 200, content_type
 
     except Exception as e:
         logger.error(f"[CRITICAL] Proxy error: {e}")
         return None, 500, None
+
+def filter_manifest_by_quality(content: str, target_bandwidth: int):
+    lines = content.splitlines()
+    filtered_lines = []
+    
+    if lines and lines[0].startswith("#EXTM3U"):
+        filtered_lines.append(lines[0])
+        
+    for i, line in enumerate(lines):
+        line = line.strip()
+        
+        if line.startswith("#EXT-X-MEDIA") or line.startswith("#EXT-X-VERSION") or line.startswith("#EXT-X-INDEPENDENT"):
+            filtered_lines.append(line)
+            continue
+            
+        if line.startswith("#EXT-X-STREAM-INF"):
+            if f"BANDWIDTH={target_bandwidth}" in line:
+                filtered_lines.append(line)
+                if i + 1 < len(lines):
+                    filtered_lines.append(lines[i+1])
+    
+    return "\n".join(filtered_lines)

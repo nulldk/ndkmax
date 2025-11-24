@@ -1,5 +1,7 @@
 import re
+from urllib.parse import quote
 from utils.logger import setup_logger
+from config import ADDON_URL
 
 logger = setup_logger(__name__)
 
@@ -19,66 +21,64 @@ def get_emoji(lang_code):
     }
     return mapping.get(lang_code, "")
 
-def parse_hls_to_stremio(url: str, content_title: str, duration: float, content: str):
+def parse_manifest_to_qualities(master_url: str, content_title: str, duration: float, content: str):
     try:
         lines = content.split('\n')
-        max_height = 0
-        max_bandwidth = 0
+        streams_found = []
         
-        for line in lines:
-            if "#EXT-X-STREAM-INF" in line:
-                res_match = re.search(r'RESOLUTION=\d+x(\d+)', line)
-                bw_match = re.search(r'BANDWIDTH=(\d+)', line)
-                if res_match:
-                    height = int(res_match.group(1))
-                    bandwidth = int(bw_match.group(1)) if bw_match else 0
-                    if height > max_height:
-                        max_height = height
-                        max_bandwidth = bandwidth
-        
-        max_quality = "Unknown"
-        if max_height > 0:
-            max_quality = f"{max_height}p"
-            
         audio_langs = re.findall(r'TYPE=AUDIO.*LANGUAGE="?(\w+)"?', content)
         unique_langs = list(set(audio_langs))
-        emojis_encontrados = []
-        
-        if unique_langs:
-            for lang in unique_langs:
-                emoji = get_emoji(lang)
-                if emoji:
-                    emojis_encontrados.append(emoji)
-        
-        if emojis_encontrados:
-            flags_str = " / ".join(emojis_encontrados)
-        else:
-            flags_str = "🇪🇸"
-            
-        size_info = ""
-        if max_bandwidth > 0 and duration > 0:
-            size_bits = max_bandwidth * (duration * 60)
-            size_gb = size_bits / 8 / (1024 ** 3)
-            size_info = f"💾 {size_gb:.2f}GB\n"
+        emojis = [get_emoji(l) for l in unique_langs if get_emoji(l)]
+        flags_str = " / ".join(emojis) if emojis else "🇪🇸"
 
-        spacer = "\u2800" * 2
-        name_formatted = f"NDKMAX{spacer} {max_quality}"
-        description = f"{content_title} - {max_quality}\n{size_info}{flags_str}"
+        base_addon_url = str(ADDON_URL).rstrip('/')
+
+        for i, line in enumerate(lines):
+            line = line.strip()
             
-        stream_entry = {
-            "name": name_formatted,
-            "title": description,
-            "url": url,
-            "behaviorHints": {
-                "notWebReady": False,
-                "bingeGroup": f"NDK-MAX",
-            }
-        }
-        return stream_entry
+            if line.startswith("#EXT-X-STREAM-INF"):
+                res_match = re.search(r'RESOLUTION=\d+x(\d+)', line)
+                bw_match = re.search(r'BANDWIDTH=(\d+)', line)
+                
+                height = int(res_match.group(1)) if res_match else 0
+                bandwidth = int(bw_match.group(1)) if bw_match else 0
+                
+                if bandwidth > 0:
+                    quality_label = f"{height}p" if height > 0 else "Auto"
+                    
+                    size_info = ""
+                    if duration > 0:
+                        size_bits = bandwidth * (duration * 60)
+                        size_gb = size_bits / 8 / (1024 ** 3)
+                        size_info = f"💾 {size_gb:.2f}GB "
+
+                    spacer = "\u2800" * 2
+                    name_formatted = f"NDKMAX{spacer} {quality_label}"
+                    title_formatted = f"{content_title}\n{quality_label} {size_info}{flags_str}"
+                    
+                    generated_url = f"{base_addon_url}/proxy/filter?url={quote(master_url)}&bw={bandwidth}"
+
+                    stream_entry = {
+                        "name": name_formatted,
+                        "title": title_formatted,
+                        "url": generated_url,
+                        "behaviorHints": {
+                            "notWebReady": False,
+                            "bingeGroup": f"NDK-MAX-{quality_label}",
+                        }
+                    }
+                    streams_found.append(stream_entry)
+
+        if not streams_found:
+             return [{
+                "name": "NDKMAX Default",
+                "title": f"{content_title}\nUnknown Quality {flags_str}",
+                "url": master_url
+            }]
+
+        streams_found.sort(key=lambda x: int(x['name'].split()[-1].replace('p', '')) if 'p' in x['name'] else 0, reverse=True)
+        return streams_found
+
     except Exception as e:
-        logger.error(f"Error parseando HLS: {e}")
-        return {
-            "name": "[NDKMAX] Error",
-            "title": f"{content_title}\n⚠️ No metadata",
-            "url": url
-        }
+        logger.error(f"Error parseando HLS streams: {e}")
+        return []
