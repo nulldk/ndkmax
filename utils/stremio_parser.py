@@ -54,7 +54,7 @@ def parse_manifest_to_qualities(master_url: str, content_title: str, duration: f
 
                     spacer = "\u2800" * 2
                     name_formatted = f"NDKMAX{spacer} {quality_label}"
-                    title_formatted = f"{content_title}\n{quality_label} {size_info}{flags_str}"
+                    title_formatted = f"{content_title} - {quality_label}\n{size_info}\n{flags_str}"
                     
                     generated_url = f"{base_addon_url}/proxy/filter?url={quote(master_url)}&bw={bandwidth}"
 
