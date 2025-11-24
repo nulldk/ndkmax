@@ -1,9 +1,8 @@
 import httpx
 import time
-import asyncio
 from aiocron import crontab
 from urllib.parse import unquote, quote
-from fastapi import FastAPI, Response, Request, BackgroundTasks
+from fastapi import FastAPI, Response 
 from fastapi.middleware.cors import CORSMiddleware
 
 import state
@@ -44,7 +43,7 @@ MAX_CACHE_SIZE = 2000
 async def ensure_cache_space():
     if len(CACHE) >= MAX_CACHE_SIZE:
         items_to_delete = sorted(CACHE.items(), key=lambda x: x[1]['last_access'])[:int(MAX_CACHE_SIZE * 0.1)]
-        for key, val in items_to_delete:
+        for key, _ in items_to_delete:
             del CACHE[key]
         logger.info(f"[CACHE CLEANUP] Espacio liberado. Eliminados: {len(items_to_delete)}")
 
