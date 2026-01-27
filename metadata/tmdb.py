@@ -16,6 +16,43 @@ class TMDB(MetadataProvider):
         full_id = id.split(":")
         self.logger.debug("Full id: " + str(full_id))
         
+        if id.startswith("tmdb:"):
+            tmdb_id = full_id[1]
+            if type == "movie":
+                url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={TMDB_KEY}&language=es-ES"
+            else:
+                url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={TMDB_KEY}&language=es-ES"
+            
+            try:
+                response = await self.http_client.get(url)
+                response.raise_for_status()
+                data = response.json()
+            except Exception as e:
+                self.logger.error(f"Error requesting TMDB metadata (Direct): {e}")
+                return None
+
+            result = None
+            if type == "movie":
+                result = Movie(
+                    id=str(data["id"]),
+                    titles=[self.replace_weird_characters(data["title"])],
+                    year=data["release_date"][:4] if data.get("release_date") else "",
+                    languages='es-ES'
+                )
+            elif type == "series":
+                if len(full_id) >= 4:
+                    result = Series(
+                        id=str(data["id"]),
+                        titles=[self.replace_weird_characters(data["name"])],
+                        season=int(full_id[2]),
+                        episode=int(full_id[3]),
+                        languages='es-ES'
+                    )
+            
+            if result:
+                self.logger.info("Got metadata for " + type + " with id " + id)
+            return result
+
         url = f"https://api.themoviedb.org/3/find/{full_id[0]}?api_key={TMDB_KEY}&external_source=imdb_id&language=es-ES"
         
         try:
