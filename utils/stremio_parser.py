@@ -76,7 +76,16 @@ def parse_manifest_to_qualities(master_url: str, content_title: str, duration: f
                 "url": master_url
             }]
 
-        streams_found.sort(key=lambda x: int(x['name'].split()[-1].replace('p', '')) if 'p' in x['name'] else 0, reverse=True)
+        def get_quality_key(x):
+            try:
+                if 'p' in x['name']:
+                    quality_str = x['name'].split()[-1].replace('p', '')
+                    return int(quality_str) if quality_str.isdigit() else 0
+                return 0
+            except (ValueError, IndexError):
+                return 0
+        
+        streams_found.sort(key=get_quality_key, reverse=True)
         return streams_found
 
     except Exception as e:
